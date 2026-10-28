@@ -596,6 +596,24 @@ fn server_survives_hangup_and_logs_why_it_stops() {
     );
     assert!(ping_socket(&api_socket).contains("pong"));
 
+    // Ping is answered by the API accept thread before the main server loop
+    // necessarily starts. Wait for an application request before SIGTERM so
+    // the test exercises graceful shutdown rather than startup timing.
+    let mut ready_stream = UnixStream::connect(&api_socket).unwrap();
+    ready_stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    writeln!(
+        ready_stream,
+        r#"{{"id":"ready","method":"workspace.list","params":{{}}}}"#
+    )
+    .unwrap();
+    let mut ready_response = String::new();
+    BufReader::new(ready_stream)
+        .read_line(&mut ready_response)
+        .unwrap();
+    assert!(ready_response.contains("\"result\""), "{ready_response}");
+
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
     assert!(
         wait_for_exit(&mut spawned.child, Duration::from_secs(10)),

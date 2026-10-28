@@ -685,7 +685,10 @@ mod tests {
             " ",
         );
         app.handle_tab_bar_status_tasks(std::time::Instant::now());
-        for _ in 0..50 {
+        // The configured command runs through a login shell. User profile
+        // initialization is independent of the cancellation behavior under test.
+        let startup_deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < startup_deadline {
             if descendant_started.exists() {
                 break;
             }
