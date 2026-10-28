@@ -106,6 +106,11 @@ enum UpdateChannel {
 
 impl UpdateChannel {
     fn configured() -> Self {
+        if crate::build_info::is_custom() {
+            // The exact-build manifest supports updates between custom revisions
+            // without changing the upstream Cargo version or persisted schema.
+            return Self::Preview;
+        }
         match crate::config::Config::load().config.update.channel {
             crate::config::UpdateChannelConfig::Stable => Self::Stable,
             crate::config::UpdateChannelConfig::Preview => Self::Preview,
@@ -326,11 +331,15 @@ impl ReleaseInfo {
 }
 
 fn fetch_update_manifest() -> Result<UpdateManifest, String> {
-    fetch_json_manifest(STABLE_UPDATE_MANIFEST_URL)
+    fetch_json_manifest(crate::build_info::update_manifest_url(
+        STABLE_UPDATE_MANIFEST_URL,
+    ))
 }
 
 fn fetch_preview_manifest() -> Result<PreviewManifest, String> {
-    fetch_json_manifest(PREVIEW_UPDATE_MANIFEST_URL)
+    fetch_json_manifest(crate::build_info::update_manifest_url(
+        PREVIEW_UPDATE_MANIFEST_URL,
+    ))
 }
 
 fn fetch_json_manifest<T>(url: &str) -> Result<T, String>
@@ -440,8 +449,13 @@ fn stable_channel_should_install(
 }
 
 fn preview_display_version(base_version: &str, build_id: &str) -> String {
+    let channel = if crate::build_info::is_custom() {
+        "followcat"
+    } else {
+        "preview"
+    };
     format!(
-        "{}-preview.{}",
+        "{}-{channel}.{}",
         base_version.trim_start_matches('v'),
         build_id
     )
@@ -460,7 +474,7 @@ fn release_info_from_preview_manifest(
     if build_id.is_empty() {
         return Err("preview manifest build_id is empty".into());
     }
-    if crate::build_info::is_preview()
+    if (crate::build_info::is_preview() || crate::build_info::is_custom())
         && crate::build_info::build_id().is_some_and(|current| current == build_id)
     {
         return Ok(None);

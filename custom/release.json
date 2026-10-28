@@ -1,0 +1,8 @@
+{
+  "repository": "followcat/herdr",
+  "upstream_repository": "herdrdev/herdr",
+  "upstream_tag": "v0.9.5",
+  "upstream_commit": "2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01",
+  "build_id": "20261028.1",
+  "notes": "Followcat custom build: keyboard shortcut locking, popup text selection, SSH clipboard image fixes, and current Devin state detection. Based on upstream v0.9.5."
+}

@@ -1,0 +1,59 @@
+onboarding = false
+
+[theme]
+name = "terminal"
+auto_switch = false
+
+[theme.custom]
+accent = "#96dc5a"
+panel_bg = "#0b0b0b"
+sidebar_bg = "#0b0b0b"
+active_row_bg = "#26331e"
+selection_bg = "#383838"
+surface0 = "#202020"
+surface1 = "#383838"
+surface_dim = "#202020"
+overlay0 = "#696969"
+overlay1 = "#898989"
+text = "#d7d7d7"
+subtext0 = "#989898"
+mauve = "#d98cff"
+green = "#96dc5a"
+yellow = "#ffcd50"
+red = "#ff5f6e"
+blue = "#46afff"
+teal = "#3cd7c8"
+peach = "#ff9146"
+
+[keys]
+remote_image_paste = "ctrl+v"
+previous_tab = "alt+left"
+next_tab = "alt+right"
+previous_agent = "alt+up"
+next_agent = "alt+down"
+previous_workspace = "ctrl+k"
+next_workspace = "ctrl+j"
+new_tab = "prefix+t"
+[[keys.command]]
+key = "alt+f"
+type = "popup"
+command = "exec \"${SHELL:-sh}\""
+description = "open floating terminal"
+width = "80%"
+height = "80%"
+
+[ui]
+accent = "#96dc5a"
+sidebar_width = 34
+sidebar_min_width = 26
+sidebar_max_width = 42
+agent_panel_sort = "priority"
+status_indicators = "symbols"
+
+[ui.sidebar.spaces]
+row_gap = 0
+rows = [["state_icon", "workspace"], ["branch"]]
+
+[ui.sidebar.agents]
+row_gap = 0
+rows = [["state_icon", {token = "tab", fg = "#96dc5a", bold = true, dim = false}, {token = "agent", fg = "#46afff", bold = false}], [{token = "machine", fg = "#898989", bold = false}, {token = "workspace", fg = "#898989", bold = false}]]

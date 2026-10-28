@@ -2515,11 +2515,13 @@ fn preview_assets_for_build<'a>(
 }
 
 fn remote_release_asset(asset_key: &str) -> io::Result<RemoteReleaseAsset> {
-    if crate::build_info::is_preview() {
+    if crate::build_info::is_preview() || crate::build_info::is_custom() {
         let build_id = crate::build_info::build_id().ok_or_else(|| {
             io::Error::other("preview client has no build id; set HERDR_REMOTE_BINARY or install Herdr on the remote manually")
         })?;
-        let manifest_bytes = fetch_remote_manifest(PREVIEW_UPDATE_MANIFEST_URL)?;
+        let manifest_bytes = fetch_remote_manifest(crate::build_info::update_manifest_url(
+            PREVIEW_UPDATE_MANIFEST_URL,
+        ))?;
         let manifest: RemotePreviewManifest =
             serde_json::from_slice(&manifest_bytes).map_err(|err| {
                 io::Error::other(format!("failed to parse preview manifest JSON: {err}"))

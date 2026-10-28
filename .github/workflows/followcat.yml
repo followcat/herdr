@@ -1,0 +1,115 @@
+name: Followcat checks and release
+
+on:
+  push:
+    branches: [followcat]
+    tags: ['followcat-v*']
+  pull_request:
+    branches: [followcat]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CARGO_BUILD_JOBS: 2
+
+concurrency:
+  group: followcat-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.repository == 'followcat/herdr'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: 1.96.1
+          components: rustfmt
+      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: cargo-nextest
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - name: Validate source and installer
+        run: |
+          cargo fmt --check
+          python3 -m unittest scripts.test_custom
+          python3 scripts/agent_detection_manifest_check.py --require-published
+          cargo nextest run --locked --test-threads 4 --status-level fail --final-status-level fail --failure-output final --success-output never
+
+  build:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: 1.96.1
+          targets: x86_64-unknown-linux-musl
+      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build musl-tools
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: followcat-linux-musl
+      - name: Build portable Linux binary
+        run: |
+          python3 scripts/custom.py build --target x86_64-unknown-linux-musl
+          mkdir -p custom-dist
+          ldd target/x86_64-unknown-linux-musl/release/herdr > custom-dist/linking.txt 2>&1 || true
+          cat custom-dist/linking.txt
+          grep -Eq 'statically linked|not a dynamic executable' custom-dist/linking.txt
+      - name: Package exact-build update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous=()
+          count="$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq 'length')"
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && [ "$count" -gt 0 ]; then
+            curl -fsSL --retry 3 "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/update.json" -o previous-update.json
+            previous=(--previous-manifest previous-update.json)
+          fi
+          python3 scripts/custom.py package --binary target/x86_64-unknown-linux-musl/release/herdr --output custom-dist "${previous[@]}"
+          python3 -c 'import json; print(json.load(open("custom/release.json"))["notes"])' > custom-dist/RELEASE_NOTES.txt
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            expected="$(python3 -c 'import sys; sys.path.insert(0, "scripts"); import custom; print(custom.source_metadata()["tag"])')"
+            test "$GITHUB_REF_NAME" = "$expected"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: followcat-linux-x86_64
+          path: custom-dist/
+
+  publish:
+    needs: build
+    if: github.repository == 'followcat/herdr' && startsWith(github.ref, 'refs/tags/followcat-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: followcat-linux-x86_64
+          path: custom-dist
+      - name: Publish the requested custom release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Herdr $GITHUB_REF_NAME" --notes-file custom-dist/RELEASE_NOTES.txt --latest \
+            custom-dist/herdr-linux-x86_64 custom-dist/install.py custom-dist/update.json custom-dist/SHA256SUMS

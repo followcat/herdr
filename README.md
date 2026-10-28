@@ -1,5 +1,7 @@
 # herdr
 
+> **Followcat custom distribution:** this fork tracks upstream stable releases and retains local terminal customizations. See [installation, updates, rollback and upstream synchronization](custom/README.md). The upstream installation instructions below install the official distribution.
+
 
 <p align="center">
   <img src="assets/logo.png" alt="herdr" width="100" />

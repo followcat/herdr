@@ -503,7 +503,7 @@ fn catalog_url() -> String {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_CATALOG_URL.to_string())
+        .unwrap_or_else(|| crate::build_info::agent_manifest_catalog_url(DEFAULT_CATALOG_URL))
 }
 
 fn fetch_text(url: &str) -> Result<String, String> {
