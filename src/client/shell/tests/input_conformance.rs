@@ -406,7 +406,11 @@ impl HerdrPath {
         for outcome in outcomes {
             herdr_owned |= self.absorb(outcome, &mut events);
         }
-        herdr_owned |= self.state.mode != ClientShellMode::Terminal || self.state.overlay.is_some();
+        // Ctrl+G is a client-owned mode switch in this customized build.
+        // Its transparency is covered separately by the locked-input tests.
+        herdr_owned |= self.state.mode != ClientShellMode::Terminal
+            || self.state.overlay.is_some()
+            || self.state.keyboard_locked;
         if herdr_owned {
             return None;
         }

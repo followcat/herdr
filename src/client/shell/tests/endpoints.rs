@@ -74,6 +74,56 @@ fn state_with_remote() -> (ClientShellState, ClientEndpointId) {
 }
 
 #[test]
+fn local_keyboard_workspace_keys_follow_config_and_sidebar_order() {
+    for (key, remote_target) in [(b"\x0a".as_slice(), false), (b"\x0b", true)] {
+        let (mut state, remote) = state_with_remote();
+        let config: Config = toml::from_str(
+            "[keys]\nnext_workspace = \"ctrl+j\"\nprevious_workspace = \"ctrl+k\"\n",
+        )
+        .unwrap();
+        state.config.keybinds = ClientShellConfig::from_config(&config).keybinds;
+        let mut local = snapshot();
+        let mut second = local.workspaces[0].clone();
+        second.workspace_id = "ws_2".into();
+        second.focused = false;
+        local.workspaces.push(second);
+        state.set_snapshot(Box::new(local));
+        let outcome = state.handle_input_bytes(key);
+        let expected_endpoint = if remote_target {
+            remote.clone()
+        } else {
+            ClientEndpointId::Local
+        };
+        let expected_workspace = if remote_target { "ws_1" } else { "ws_2" };
+        assert!(matches!(
+            outcome.actions.as_slice(),
+            [ClientShellAction::ActivateEndpoint { endpoint_id, target: Some(ClientEndpointFocusTarget::Workspace(workspace_id)) }]
+                if endpoint_id == &expected_endpoint && workspace_id == expected_workspace
+        ));
+        assert!(outcome.requests.is_empty());
+    }
+}
+
+#[test]
+fn local_keyboard_workspace_keys_skip_disconnected_machines() {
+    let (mut state, remote) = state_with_remote();
+    let config: Config =
+        toml::from_str("[keys]\nnext_workspace = \"ctrl+j\"\nprevious_workspace = \"ctrl+k\"\n")
+            .unwrap();
+    state.config.keybinds = ClientShellConfig::from_config(&config).keybinds;
+    state.set_endpoint_status(&remote, ClientEndpointStatus::Reconnecting);
+    for key in [b"\x0a".as_slice(), b"\x0b"] {
+        let outcome = state.handle_input_bytes(key);
+        assert!(matches!(
+            outcome.actions.as_slice(),
+            [ClientShellAction::ActivateEndpoint { endpoint_id: ClientEndpointId::Local, target: Some(ClientEndpointFocusTarget::Workspace(workspace_id)) }]
+                if workspace_id == "ws_1"
+        ));
+        assert!(outcome.requests.is_empty());
+    }
+}
+
+#[test]
 fn workspace_navigation_waits_for_the_target_presentation_fence() {
     use crate::client::endpoint::{EndpointNegotiation, EndpointRegistry};
     use crate::client::endpoint_commands::EndpointCommands;

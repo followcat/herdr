@@ -32,13 +32,16 @@ pub(super) fn render_mode_bar(
     buffer: &mut Buffer,
     pane_area: Rect,
     mode: ClientShellMode,
+    keyboard_locked: bool,
     copy_mode: Option<&ClientCopyModeState>,
     endpoint_error: Option<&str>,
     update_available: bool,
     keybinds: &LiveKeybindConfig,
     palette: &Palette,
 ) -> Option<Rect> {
-    if (mode == ClientShellMode::Terminal && endpoint_error.is_none()) || pane_area.is_empty() {
+    if (mode == ClientShellMode::Terminal && !keyboard_locked && endpoint_error.is_none())
+        || pane_area.is_empty()
+    {
         return None;
     }
 
@@ -76,7 +79,13 @@ pub(super) fn render_mode_bar(
     };
 
     let mut segments = Vec::<(String, Style)>::new();
-    if let Some(error) = endpoint_error {
+    if keyboard_locked {
+        segments.extend([
+            (" LOCKED ".to_owned(), mode_style),
+            (" ctrl+g".to_owned(), key),
+            (" unlock".to_owned(), base),
+        ]);
+    } else if let Some(error) = endpoint_error {
         segments.extend([
             (" ERROR ".to_owned(), mode_style),
             (format!(" {error}"), base),

@@ -1,5 +1,130 @@
 use super::*;
 
+fn local_keyboard_state() -> ClientShellState {
+    let config: Config = toml::from_str(
+        r#"
+onboarding = false
+[keys]
+previous_tab = "alt+left"
+next_tab = "alt+right"
+previous_agent = "alt+up"
+next_agent = "alt+down"
+previous_workspace = "ctrl+k"
+next_workspace = "ctrl+j"
+new_tab = "prefix+t"
+"#,
+    )
+    .unwrap();
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state
+}
+
+#[test]
+fn local_keyboard_lock_forwards_prefix_workspace_and_navigation_keys() {
+    let mut state = local_keyboard_state();
+    let locked = state.handle_input_bytes(b"\x07");
+    assert!(state.keyboard_locked);
+    assert!(locked.actions.is_empty());
+    assert!(locked.requests.is_empty());
+
+    for bytes in [
+        b"\x02".as_slice(),
+        b"\x0a",
+        b"\x0b",
+        b"\x1b[1;3A",
+        b"\x1b[1;3B",
+        b"\x1b[1;3C",
+        b"\x1b[1;3D",
+    ] {
+        let outcome = state.handle_input_bytes(bytes);
+        assert!(outcome.actions.is_empty(), "{bytes:?}");
+        assert!(
+            matches!(
+                outcome.requests.as_slice(),
+                [ClientMessage::ClientShellPaneInput { pane_id, events }]
+                    if pane_id == "pane_1" && !events.is_empty()
+            ),
+            "{bytes:?}: {:?}",
+            outcome.requests
+        );
+        assert_eq!(state.mode, ClientShellMode::Terminal);
+    }
+
+    let unlocked = state.handle_input_bytes(b"\x07");
+    assert!(!state.keyboard_locked);
+    assert!(unlocked.requests.is_empty());
+    state.handle_input_bytes(b"\x02");
+    assert_eq!(state.mode, ClientShellMode::Prefix);
+    state.handle_input_bytes(b"t");
+    assert!(matches!(state.overlay, Some(ClientShellOverlay::Rename(_))));
+}
+
+#[test]
+fn local_keyboard_lock_does_not_toggle_on_repeat_or_release() {
+    use crossterm::event::KeyEventKind;
+
+    let mut state = local_keyboard_state();
+    let key = crate::input::TerminalKey::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
+    state.handle_raw_events(vec![RawInputEvent::Key(key.clone())]);
+    assert!(state.keyboard_locked);
+    for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+        let outcome =
+            state.handle_raw_events(vec![RawInputEvent::Key(key.clone().with_kind(kind))]);
+        assert!(state.keyboard_locked);
+        assert!(outcome.requests.is_empty());
+        assert!(outcome.actions.is_empty());
+    }
+}
+
+#[test]
+fn local_keyboard_lock_has_a_visible_unlock_hint() {
+    let mut state = local_keyboard_state();
+    state.handle_input_bytes(b"\x07");
+    let frame = state.compose(100, 28).expect("locked frame");
+    let rows = frame_rows(&frame).join("\n");
+    assert!(rows.contains("LOCKED"));
+    assert!(rows.contains("ctrl+g"));
+}
+
+#[test]
+fn local_keyboard_lock_from_prefix_mode_cancels_prefix() {
+    let mut state = local_keyboard_state();
+    state.handle_input_bytes(b"\x02");
+    assert_eq!(state.mode, ClientShellMode::Prefix);
+    state.handle_input_bytes(b"\x07");
+    assert!(state.keyboard_locked);
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+}
+
+#[test]
+fn local_keyboard_lock_forwards_unicode_and_paste_after_mouse_opens_a_menu() {
+    let mut state = local_keyboard_state();
+    state.handle_input_bytes(b"\x07");
+    state.overlay = Some(ClientShellOverlay::Help(ClientHelpOverlay {
+        query: TextEditor::default(),
+        search_focused: true,
+        scroll: 0,
+    }));
+    let outcome = state.handle_raw_events(vec![
+        RawInputEvent::Text(crate::input::TextCommit::new("中文".to_owned())),
+        RawInputEvent::Paste("pasted text".into()),
+    ]);
+    assert!(outcome.actions.is_empty());
+    assert!(matches!(
+        outcome.requests.as_slice(),
+        [ClientMessage::ClientShellPaneInput { events, .. }]
+            if matches!(events.as_slice(), [
+                ClientPaneInputEvent::TextCommit(text),
+                ClientPaneInputEvent::Paste(paste),
+            ] if text == "中文" && paste == "pasted text")
+    ));
+    // An overlay opened by the mouse must never hide the unlock shortcut.
+    state.handle_input_bytes(b"\x07");
+    assert!(!state.keyboard_locked);
+}
+
 #[test]
 fn host_appearance_prefers_explicit_reports_over_background_inference() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));

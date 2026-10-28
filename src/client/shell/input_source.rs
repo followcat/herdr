@@ -2,6 +2,9 @@ use super::*;
 
 impl ClientShellState {
     fn wants_ascii_input(&self) -> bool {
+        if self.keyboard_locked {
+            return false;
+        }
         if let Some(overlay) = self.overlay.as_ref() {
             return matches!(
                 overlay,

@@ -81,6 +81,7 @@ pub(crate) fn keybind_help_groups(
             "global",
             vec![
                 entry(crate::config::format_prefix_combos(prefixes), "prefix mode"),
+                entry("ctrl+g", "lock / unlock keyboard shortcuts"),
                 entry(binding_label(&keybinds.help), "keybinds"),
                 entry(binding_label(&keybinds.settings), "settings"),
                 entry(binding_label(&keybinds.detach), "detach"),

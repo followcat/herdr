@@ -234,7 +234,7 @@ impl ClientShellState {
                 },
                 other => other,
             };
-            if self.handle_machine_badge_event(&event, &mut outcome) {
+            if !self.keyboard_locked && self.handle_machine_badge_event(&event, &mut outcome) {
                 continue;
             }
             if let Some(update) = host_theme_update(&event) {
@@ -247,6 +247,17 @@ impl ClientShellState {
                 }
                 RawInputEvent::Text(text) => {
                     let text = text.into_string();
+                    if self.keyboard_locked {
+                        if let Some(target) = self.keyboard_passthrough_target() {
+                            super::push_target_event(
+                                target,
+                                ClientPaneInputEvent::TextCommit(text),
+                                &mut outcome,
+                            );
+                        }
+                        self.reconcile_input_source();
+                        continue;
+                    }
                     if matches!(
                         self.overlay,
                         Some(
@@ -280,6 +291,17 @@ impl ClientShellState {
                     }
                 }
                 RawInputEvent::Paste(text) => {
+                    if self.keyboard_locked {
+                        if let Some(target) = self.keyboard_passthrough_target() {
+                            super::push_target_event(
+                                target,
+                                ClientPaneInputEvent::Paste(text),
+                                &mut outcome,
+                            );
+                        }
+                        self.reconcile_input_source();
+                        continue;
+                    }
                     if matches!(
                         self.overlay,
                         Some(
@@ -612,6 +634,26 @@ impl ClientShellState {
         key: &crate::input::TerminalKey,
         outcome: &mut ClientShellInput,
     ) -> Option<ClientInputTarget> {
+        // This is client presentation state: it must also work on old remote servers.
+        if key.modifiers == KeyModifiers::CONTROL
+            && key.code == KeyCode::Char('g')
+            && (self.keyboard_locked || self.overlay.is_none())
+        {
+            if key.kind == KeyEventKind::Press {
+                self.exit_copy_mode(false, outcome);
+                self.mode = ClientShellMode::Terminal;
+                self.navigate_workspace_id = None;
+                self.pending_workspace_highlight = None;
+                self.selection = None;
+                self.stop_selection_autoscroll();
+                self.keyboard_locked = !self.keyboard_locked;
+                outcome.repaint = true;
+            }
+            return None;
+        }
+        if self.keyboard_locked {
+            return self.keyboard_passthrough_target();
+        }
         if self.handle_modal_paste_shortcut_with(key, outcome, crate::platform::read_clipboard_text)
         {
             return None;
@@ -1069,9 +1111,18 @@ impl ClientShellState {
         }
     }
 
+    fn keyboard_passthrough_target(&self) -> Option<ClientInputTarget> {
+        if self.popup_pending {
+            return None;
+        }
+        self.popup_input_target()
+            .or_else(|| self.focused_pane_id().map(ClientInputTarget::Pane))
+    }
+
     fn input_context(&self) -> ClientInputContext {
         ClientInputContext {
             mode: self.mode,
+            keyboard_locked: self.keyboard_locked,
             overlay: self.overlay.as_ref().map(ClientShellOverlay::kind),
             popup_terminal_id: self.popup_input_target().and_then(|target| match target {
                 ClientInputTarget::Popup(terminal_id) => Some(terminal_id),
