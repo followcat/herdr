@@ -914,6 +914,9 @@ impl ClientShellState {
             return;
         }
         if let Some(hit) = self.hits.popup.clone() {
+            if self.handle_popup_mouse_selection(&hit, mouse, outcome) {
+                return;
+            }
             if super::contains(hit.inner_rect, point) {
                 match mouse.kind {
                     MouseEventKind::Down(button) => {

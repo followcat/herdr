@@ -582,6 +582,12 @@ impl ClientShellState {
                 ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
                 frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
                 blit_pane_surface(&mut frame, &popup.frame, geometry.inner);
+                self.render_popup_selection(
+                    &mut frame,
+                    &popup.frame,
+                    &popup.terminal_id,
+                    geometry.inner,
+                )?;
                 self.hits.popup = Some(PaneHit {
                     rect: geometry.outer,
                     inner_rect: geometry.inner,

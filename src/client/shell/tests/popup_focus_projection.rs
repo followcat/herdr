@@ -1,5 +1,294 @@
 use super::*;
 
+fn popup_mouse_selection_state(lines: &[&str], copy_on_select: bool) -> ClientShellState {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.config.copy_on_select = copy_on_select;
+    state.set_snapshot(Box::new(snapshot()));
+    let mut surface = surface_with_popup();
+    let popup = surface.popup.as_mut().unwrap();
+    popup.mouse_reporting = false;
+    let buffer = Buffer::with_lines(lines.iter().copied());
+    popup.frame = FrameData::from_ratatui_buffer(&buffer, None);
+    popup.width = Some(crate::protocol::ClientShellPopupSize::Cells(
+        buffer.area.width + 3,
+    ));
+    popup.height = Some(crate::protocol::ClientShellPopupSize::Cells(
+        buffer.area.height + 2,
+    ));
+    state.set_pane_surface(surface);
+    state.compose(106, 20).expect("popup geometry");
+    state
+}
+
+fn popup_selection_mouse(
+    state: &mut ClientShellState,
+    kind: MouseEventKind,
+    column: u16,
+    row: u16,
+) -> ClientShellInput {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::empty(),
+    })])
+}
+
+#[test]
+fn popup_mouse_selection_drag_highlights_and_copies_visible_text() {
+    let mut state = popup_mouse_selection_state(&["hello world", "second line", ""], true);
+    let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+    let before = state.compose(106, 20).unwrap();
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        inner.x,
+        inner.y,
+    );
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        inner.x + 4,
+        inner.y,
+    );
+    let highlighted = state.compose(106, 20).unwrap();
+    let index = usize::from(inner.y) * usize::from(highlighted.width) + usize::from(inner.x);
+    assert_ne!(highlighted.cells[index].bg, before.cells[index].bg);
+    assert_eq!(highlighted.cells[index + 5].bg, before.cells[index + 5].bg);
+    let released = popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Up(MouseButton::Left),
+        inner.x + 4,
+        inner.y,
+    );
+    assert!(
+        matches!(released.actions.as_slice(), [ClientShellAction::ClipboardWrite(text)] if text == b"hello")
+    );
+    assert!(released.requests.is_empty());
+}
+
+#[test]
+fn popup_mouse_selection_retained_text_copies_with_ctrl_c() {
+    let mut state = popup_mouse_selection_state(&["hello world", "", ""], false);
+    let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        inner.x,
+        inner.y,
+    );
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        inner.x + 4,
+        inner.y,
+    );
+    let released = popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Up(MouseButton::Left),
+        inner.x + 4,
+        inner.y,
+    );
+    assert!(released.actions.is_empty());
+    let copied = state.handle_input_bytes(b"\x03");
+    assert!(
+        matches!(copied.actions.as_slice(), [ClientShellAction::ClipboardWrite(text)] if text == b"hello")
+    );
+    assert!(copied.requests.is_empty());
+    let interrupt = state.handle_input_bytes(b"\x03");
+    assert!(interrupt.actions.is_empty());
+    assert!(matches!(
+        interrupt.requests.as_slice(),
+        [ClientMessage::ClientShellPopupInput { .. }]
+    ));
+}
+
+#[test]
+fn popup_mouse_selection_reverse_drag_can_end_outside_the_popup() {
+    let mut state = popup_mouse_selection_state(&["hello world", "", ""], true);
+    let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        inner.x + 4,
+        inner.y,
+    );
+    popup_selection_mouse(&mut state, MouseEventKind::Drag(MouseButton::Left), 0, 0);
+    let released = popup_selection_mouse(&mut state, MouseEventKind::Up(MouseButton::Left), 0, 0);
+    assert!(
+        matches!(released.actions.as_slice(), [ClientShellAction::ClipboardWrite(text)] if text == b"hello")
+    );
+    assert!(released.requests.is_empty());
+}
+
+#[test]
+fn popup_mouse_selection_copy_key_repeats_do_not_interrupt_the_shell() {
+    use crossterm::event::KeyEventKind;
+    let mut state = popup_mouse_selection_state(&["hello world", "", ""], false);
+    state.set_host_reports_key_releases(true);
+    let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        inner.x,
+        inner.y,
+    );
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        inner.x + 4,
+        inner.y,
+    );
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Up(MouseButton::Left),
+        inner.x + 4,
+        inner.y,
+    );
+    let key = crate::input::TerminalKey::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    let copied = state.handle_raw_events(vec![RawInputEvent::Key(key.clone())]);
+    assert!(
+        matches!(copied.actions.as_slice(), [ClientShellAction::ClipboardWrite(text)] if text == b"hello")
+    );
+    for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+        let repeated =
+            state.handle_raw_events(vec![RawInputEvent::Key(key.clone().with_kind(kind))]);
+        assert!(repeated.requests.is_empty());
+        assert!(repeated.actions.is_empty());
+    }
+}
+
+#[test]
+fn popup_mouse_selection_copies_wide_characters_and_multiple_rows() {
+    let mut state = popup_mouse_selection_state(&["a中文b   ", "second", ""], true);
+    let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+    // Begin in the second cell occupied by 中: the whole character is selected.
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Left),
+        inner.x + 2,
+        inner.y,
+    );
+    popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        inner.x + 2,
+        inner.y + 1,
+    );
+    let released = popup_selection_mouse(
+        &mut state,
+        MouseEventKind::Up(MouseButton::Left),
+        inner.x + 2,
+        inner.y + 1,
+    );
+    assert!(
+        matches!(released.actions.as_slice(), [ClientShellAction::ClipboardWrite(text)] if text == "中文b\nsec".as_bytes())
+    );
+}
+
+#[test]
+fn popup_mouse_selection_is_cleared_when_popup_closes_changes_or_resizes() {
+    for transition in 0..3 {
+        let mut state = popup_mouse_selection_state(&["hello world", "", ""], false);
+        let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+        popup_selection_mouse(
+            &mut state,
+            MouseEventKind::Down(MouseButton::Left),
+            inner.x,
+            inner.y,
+        );
+        popup_selection_mouse(
+            &mut state,
+            MouseEventKind::Drag(MouseButton::Left),
+            inner.x + 4,
+            inner.y,
+        );
+        popup_selection_mouse(
+            &mut state,
+            MouseEventKind::Up(MouseButton::Left),
+            inner.x + 4,
+            inner.y,
+        );
+        let mut next = surface_with_popup();
+        match transition {
+            0 => next.popup = None,
+            1 => next.popup.as_mut().unwrap().terminal_id = "another-popup".into(),
+            _ => {
+                next.popup.as_mut().unwrap().frame =
+                    FrameData::from_ratatui_buffer(&Buffer::with_lines(["resized", ""]), None)
+            }
+        }
+        state.set_pane_surface(next);
+        state.compose(106, 20).unwrap();
+        let copied = state.handle_input_bytes(b"\x03");
+        assert!(copied.actions.is_empty(), "transition {transition}");
+        assert_eq!(copied.requests.len(), 1);
+    }
+}
+
+#[test]
+fn popup_mouse_selection_preserves_application_mouse_reporting() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface_with_popup());
+    state.compose(106, 20).unwrap();
+    let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        let outcome = popup_selection_mouse(&mut state, kind, inner.x + 1, inner.y);
+        assert!(outcome.actions.is_empty());
+        assert!(
+            matches!(outcome.requests.as_slice(), [ClientMessage::ClientShellPopupInput { events, .. }]
+            if matches!(events.as_slice(), [ClientPaneInputEvent::Mouse { .. }]))
+        );
+    }
+}
+
+#[test]
+fn popup_mouse_selection_plain_click_and_typing_do_not_swallow_interrupts() {
+    for input in [
+        None,
+        Some(RawInputEvent::Text(crate::input::TextCommit::new("中文"))),
+        Some(RawInputEvent::Paste("pasted".into())),
+    ] {
+        let mut state = popup_mouse_selection_state(&["hello world", "", ""], false);
+        let inner = state.hits.popup.as_ref().unwrap().inner_rect;
+        popup_selection_mouse(
+            &mut state,
+            MouseEventKind::Down(MouseButton::Left),
+            inner.x,
+            inner.y,
+        );
+        if input.is_some() {
+            popup_selection_mouse(
+                &mut state,
+                MouseEventKind::Drag(MouseButton::Left),
+                inner.x + 4,
+                inner.y,
+            );
+        }
+        let released = popup_selection_mouse(
+            &mut state,
+            MouseEventKind::Up(MouseButton::Left),
+            inner.x,
+            inner.y,
+        );
+        assert!(released.actions.is_empty());
+        if let Some(input) = input {
+            state.handle_raw_events(vec![input]);
+        }
+        let interrupt = state.handle_input_bytes(b"\x03");
+        assert!(interrupt.actions.is_empty());
+        assert!(matches!(
+            interrupt.requests.as_slice(),
+            [ClientMessage::ClientShellPopupInput { .. }]
+        ));
+    }
+}
+
 #[test]
 fn clipboard_image_targets_the_focused_pane_or_active_popup() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));

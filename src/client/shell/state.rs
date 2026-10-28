@@ -871,6 +871,7 @@ pub(crate) struct ClientShellState {
     pub(super) graphics_cell_size: crate::kitty_graphics::HostCellSize,
     pub(super) popup_terminal_id: Option<String>,
     pub(super) sidebar_collapsed: bool,
+    pub(super) popup_selection: Option<crate::selection::Selection<String>>,
     pub(super) sidebar_collapsed_manual: bool,
     pub(super) sidebar_width: u16,
     pub(super) sidebar_width_manual: bool,
@@ -1045,6 +1046,7 @@ impl ClientShellState {
                 height_px: 1,
             },
             popup_terminal_id: None,
+            popup_selection: None,
             sidebar_collapsed,
             sidebar_collapsed_manual: preferences.sidebar_collapsed.is_some(),
             sidebar_width,
@@ -1245,6 +1247,7 @@ impl ClientShellState {
         self.pending_pane_surface = None;
         self.input_leases = ClientInputLeases::default();
         self.popup_terminal_id = None;
+        self.popup_selection = None;
         self.chrome_drag = None;
         self.workspace_press = None;
         self.tab_press = None;
@@ -1670,6 +1673,19 @@ impl ClientShellState {
             .popup
             .as_deref()
             .map(|popup| popup.terminal_id.clone());
+        let previous_popup_size = self.pane_surface.as_ref().and_then(|surface| {
+            surface
+                .popup
+                .as_deref()
+                .map(|popup| (popup.frame.width, popup.frame.height))
+        });
+        let next_popup_size = surface
+            .popup
+            .as_deref()
+            .map(|popup| (popup.frame.width, popup.frame.height));
+        if previous_popup != next_popup || previous_popup_size != next_popup_size {
+            self.popup_selection = None;
+        }
         if previous_popup != next_popup {
             if next_popup.is_some() && matches!(self.overlay, Some(ClientShellOverlay::Settings(_)))
             {

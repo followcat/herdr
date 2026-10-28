@@ -247,6 +247,7 @@ impl ClientShellState {
                 }
                 RawInputEvent::Text(text) => {
                     let text = text.into_string();
+                    self.clear_popup_selection(&mut outcome);
                     if self.keyboard_locked {
                         if let Some(target) = self.keyboard_passthrough_target() {
                             super::push_target_event(
@@ -291,6 +292,7 @@ impl ClientShellState {
                     }
                 }
                 RawInputEvent::Paste(text) => {
+                    self.clear_popup_selection(&mut outcome);
                     if self.keyboard_locked {
                         if let Some(target) = self.keyboard_passthrough_target() {
                             super::push_target_event(
@@ -645,6 +647,7 @@ impl ClientShellState {
                 self.navigate_workspace_id = None;
                 self.pending_workspace_highlight = None;
                 self.selection = None;
+                self.clear_popup_selection(outcome);
                 self.stop_selection_autoscroll();
                 self.keyboard_locked = !self.keyboard_locked;
                 outcome.repaint = true;
@@ -652,6 +655,7 @@ impl ClientShellState {
             return None;
         }
         if self.keyboard_locked {
+            self.clear_popup_selection(outcome);
             return self.keyboard_passthrough_target();
         }
         if self.handle_modal_paste_shortcut_with(key, outcome, crate::platform::read_clipboard_text)
@@ -672,6 +676,13 @@ impl ClientShellState {
             return None;
         }
         if let Some(target) = self.popup_input_target() {
+            if is_retained_selection_copy_key(key) && self.copy_popup_selection(outcome) {
+                self.clear_popup_selection(outcome);
+                return None;
+            }
+            if !matches!(key.code, KeyCode::Modifier(_)) {
+                self.clear_popup_selection(outcome);
+            }
             return Some(target);
         }
         if self.popup_pending {
@@ -1132,7 +1143,11 @@ impl ClientShellState {
             retained_selection: self
                 .selection
                 .as_ref()
-                .is_some_and(crate::selection::Selection::is_visible),
+                .is_some_and(crate::selection::Selection::is_visible)
+                || self
+                    .popup_selection
+                    .as_ref()
+                    .is_some_and(crate::selection::Selection::is_visible),
         }
     }
 
