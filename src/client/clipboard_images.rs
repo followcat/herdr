@@ -56,10 +56,36 @@ pub(super) fn client_remote_image_paste_key(
 
 pub(super) fn endpoint_accepts_local_images(
     remote_client_process: bool,
+    ssh_client_process: bool,
     endpoint_id: &super::endpoint::ClientEndpointId,
     active_surface_available: bool,
 ) -> bool {
-    active_surface_available && (remote_client_process || !endpoint_id.is_local())
+    // A plain `herdr` launched over SSH still has a local IPC endpoint, but its
+    // client clipboard and persistent server/panes have different display environments.
+    active_surface_available
+        && (remote_client_process || ssh_client_process || !endpoint_id.is_local())
+}
+
+fn clipboard_image_key_gesture(
+    events: impl IntoIterator<Item = crate::raw_input::RawInputEvent>,
+    combo: (crossterm::event::KeyCode, crossterm::event::KeyModifiers),
+) -> bool {
+    let mut events = events.into_iter();
+    let Some(crate::raw_input::RawInputEvent::Key(press)) = events.next() else {
+        return false;
+    };
+    if press.kind != crossterm::event::KeyEventKind::Press
+        || !crate::config::terminal_key_matches_combo(&press, combo)
+    {
+        return false;
+    }
+    // Kitty hosts can deliver the press and release in one input chunk. Consume
+    // only that gesture; never swallow unrelated typing or a different key.
+    events.all(|event| {
+        matches!(event, crate::raw_input::RawInputEvent::Key(release)
+        if release.kind == crossterm::event::KeyEventKind::Release
+            && release.identity() == press.identity())
+    })
 }
 
 #[cfg(unix)]
@@ -80,12 +106,7 @@ pub(super) fn should_bridge_clipboard_image_paste(
     };
 
     let events = crate::raw_input::parse_framed_input(data);
-    matches!(
-        events.as_slice(),
-        [crate::raw_input::RawInputEvent::Key(key)]
-            if key.kind == crossterm::event::KeyEventKind::Press
-                && crate::config::terminal_key_matches_combo(key, remote_image_paste_key)
-    )
+    clipboard_image_key_gesture(events, remote_image_paste_key)
 }
 
 #[cfg(windows)]
@@ -104,18 +125,9 @@ pub(super) fn should_bridge_clipboard_image_events(
     let Some(remote_image_paste_key) = remote_image_paste_key else {
         return false;
     };
-    matches!(
-        events,
-        [event]
-            if matches!(
-                event.to_raw_input_event(),
-                crate::raw_input::RawInputEvent::Key(key)
-                    if key.kind == crossterm::event::KeyEventKind::Press
-                        && crate::config::terminal_key_matches_combo(
-                            &key,
-                            remote_image_paste_key,
-                        )
-            )
+    clipboard_image_key_gesture(
+        events.iter().map(ClientInputEvent::to_raw_input_event),
+        remote_image_paste_key,
     )
 }
 

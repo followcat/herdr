@@ -450,6 +450,7 @@ async fn run_client_loop(
     let _ = config.mouse_scroll_lines;
     let draw_host_cursor = attach_escape.is_none() && should_draw_host_cursor(config.host_cursor);
     let is_remote_client = is_remote_client_process();
+    let clipboard_client_over_ssh = terminal_setup::is_ssh_session();
     let local_unavailable = initial.is_none();
 
     let mut state = ClientState {
@@ -829,6 +830,7 @@ async fn run_client_loop(
             ClientLoopEvent::StdinInput(data) => {
                 let image_bridge_active = endpoint_accepts_local_images(
                     is_remote_client,
+                    clipboard_client_over_ssh,
                     write_stream.active_id(),
                     write_stream.active_surface_available(),
                 );
@@ -1136,6 +1138,7 @@ async fn run_client_loop(
             ClientLoopEvent::StdinEvents(events) => {
                 let image_bridge_active = endpoint_accepts_local_images(
                     is_remote_client,
+                    clipboard_client_over_ssh,
                     write_stream.active_id(),
                     write_stream.active_surface_available(),
                 );

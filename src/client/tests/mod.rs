@@ -200,18 +200,28 @@ fn image_bridge_follows_the_selected_remote_endpoint() {
         crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
     );
 
-    assert!(endpoint_accepts_local_images(false, &remote, true));
+    assert!(endpoint_accepts_local_images(false, false, &remote, true));
     assert!(endpoint_accepts_local_images(
         true,
+        false,
         &crate::client::endpoint::ClientEndpointId::Local,
         true,
     ));
     assert!(!endpoint_accepts_local_images(
         false,
+        false,
         &crate::client::endpoint::ClientEndpointId::Local,
         true,
     ));
-    assert!(!endpoint_accepts_local_images(false, &remote, false));
+    assert!(!endpoint_accepts_local_images(false, false, &remote, false));
+}
+
+#[test]
+fn ssh_client_bridges_images_for_its_local_server_without_pane_x11_access() {
+    let local = crate::client::endpoint::ClientEndpointId::Local;
+    assert!(endpoint_accepts_local_images(false, true, &local, true));
+    assert!(!endpoint_accepts_local_images(false, true, &local, false));
+    assert!(!endpoint_accepts_local_images(false, false, &local, true));
 }
 
 #[cfg(unix)]
@@ -251,6 +261,32 @@ fn clipboard_image_paste_bridge_triggers_on_configured_key_and_empty_paste() {
     assert!(!should_bridge_clipboard_image_paste(&[0x16], true, None));
     assert!(!should_bridge_clipboard_image_paste(
         b"v",
+        true,
+        Some(ctrl_v)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn clipboard_image_paste_accepts_a_batched_key_release_without_swallowing_text() {
+    let ctrl_v = crate::config::parse_key_combo("ctrl+v").unwrap();
+    assert!(should_bridge_clipboard_image_paste(
+        b"\x1b[118;5u\x1b[118;5:3u",
+        true,
+        Some(ctrl_v)
+    ));
+    assert!(should_bridge_clipboard_image_paste(
+        b"\x1b[118;5u\x1b[118;1:3u",
+        true,
+        Some(ctrl_v)
+    ));
+    assert!(!should_bridge_clipboard_image_paste(
+        b"\x16other text",
+        true,
+        Some(ctrl_v)
+    ));
+    assert!(!should_bridge_clipboard_image_paste(
+        b"\x1b[118;5:2u",
         true,
         Some(ctrl_v)
     ));
